@@ -1,0 +1,16 @@
+{
+  "fruits": [
+    { "name": "Apple", "decay_constant": 0.02, "ideal_temp_c": 2, "respiration_category": "Low" },
+    { "name": "Banana", "decay_constant": 0.08, "ideal_temp_c": 13, "respiration_category": "Moderate" },
+    { "name": "Strawberry", "decay_constant": 0.25, "ideal_temp_c": 2, "respiration_category": "High" },
+    { "name": "Mango", "decay_constant": 0.07, "ideal_temp_c": 13, "respiration_category": "Moderate" },
+    { "name": "Grapes", "decay_constant": 0.04, "ideal_temp_c": 2, "respiration_category": "Low" }
+  ],
+  "vegetables": [
+    { "name": "Spinach", "decay_constant": 0.45, "ideal_temp_c": 2, "respiration_category": "Extremely High" },
+    { "name": "Tomato", "decay_constant": 0.10, "ideal_temp_c": 12, "respiration_category": "Moderate" },
+    { "name": "Broccoli", "decay_constant": 0.35, "ideal_temp_c": 2, "respiration_category": "Extremely High" },
+    { "name": "Carrot", "decay_constant": 0.09, "ideal_temp_c": 2, "respiration_category": "Moderate" },
+    { "name": "Potato", "decay_constant": 0.01, "ideal_temp_c": 10, "respiration_category": "Low" }
+  ]
+}
