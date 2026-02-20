@@ -1,0 +1,15 @@
+﻿Analyzing Fresh-Route...                                        
+
+   info - 'background' is deprecated and shouldn't be used. Use surface instead. This feature was deprecated after v3.18.0-0.1.pre - lib\core\theme\app_theme.dart:59:9 - deprecated_member_use
+  error - The argument type 'CardTheme' can't be assigned to the parameter type 'CardThemeData?'.  - lib\core\theme\app_theme.dart:62:18 - argument_type_not_assignable
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\core\theme\app_theme.dart:81:57 - deprecated_member_use
+warning - Unused import: 'package:fresh_route/core/theme/app_theme.dart' - lib\features\auth\login_screen.dart:2:8 - unused_import
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\auth\splash_screen.dart:24:45 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\auth\splash_screen.dart:51:37 - deprecated_member_use
+  error - The method 'quadraticTo' isn't defined for the type 'Path' - lib\features\dashboard\in_transit_screen.dart:308:9 - undefined_method
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\trip\harvest_input_screen.dart:116:38 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\trip\harvest_input_screen.dart:118:57 - deprecated_member_use
+   info - Unnecessary 'const' keyword - lib\features\trip\harvest_input_screen.dart:171:15 - unnecessary_const
+   info - Unnecessary 'const' keyword - lib\features\trip\harvest_input_screen.dart:175:15 - unnecessary_const
+   info - Unnecessary 'const' keyword - lib\features\trip\harvest_input_screen.dart:176:15 - unnecessary_const
+
