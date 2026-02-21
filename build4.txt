@@ -1,0 +1,11 @@
+﻿Resolving dependencies...
+Downloading packages...
+  google_maps_flutter 2.2.8 (2.14.2 available)
+  google_maps_flutter_android 2.18.12 (2.19.1 available)
+  google_maps_flutter_ios 2.17.4 (2.17.5 available)
+  meta 1.17.0 (1.18.1 available)
+Got dependencies!
+4 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Running Gradle task 'assembleDebug'...                            102.4s
+ΓêÜ Built build\app\outputs\flutter-apk\app-debug.apk

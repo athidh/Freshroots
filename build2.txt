@@ -1,0 +1,161 @@
+﻿Resolving dependencies...
+Downloading packages...
+  google_maps_flutter 2.2.8 (2.14.2 available)
+  google_maps_flutter_android 2.18.12 (2.19.1 available)
+  google_maps_flutter_ios 2.17.4 (2.17.5 available)
+  meta 1.17.0 (1.18.1 available)
+Got dependencies!
+4 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Running Gradle task 'assembleDebug'...                          
+flutter : D:\freshroute
+\frontend\l10n.yaml: 
+The argument 
+"synthetic-package" no 
+longer has any effect 
+and should be removed. 
+See http://flutter.dev/
+to/flutter-gen-deprecat
+ion
+At line:1 char:1
++ flutter build apk 
+--debug 2>&1 | 
+Out-File -Encoding 
+utf8 d:\freshrout ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (D:\freshroute   
+ \f...gen-deprecati    
+on:String) [], Rem    
+oteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+lib/features/dashboard/
+command_center_screen.d
+art:245:34: Error: Not 
+a constant expression.
+                       
+     Text(l.getting_loc
+ation, style: 
+TextStyle(color: AppThe
+me.textSecondary)),
+                       
+          ^
+lib/features/dashboard/
+command_center_screen.d
+art:345:16: Error: The 
+getter 'l' isn't 
+defined for the type '_
+CommandCenterScreenStat
+e'.
+ - '_CommandCenterScree
+nState' is from 'packag
+e:fresh_route/features/
+dashboard/command_cente
+r_screen.dart' ('lib/fe
+atures/dashboard/comman
+d_center_screen.dart').
+Try correcting the 
+name to the name of an 
+existing getter, or 
+defining a getter or 
+field named 'l'.
+          
+Text(l.select_market, 
+style: 
+TextStyle(fontWeight: 
+FontWeight.w800, 
+fontSize: 15)),
+               ^
+lib/features/dashboard/
+command_center_screen.d
+art:430:18: Error: The 
+getter 'l' isn't 
+defined for the type '_
+CommandCenterScreenStat
+e'.
+ - '_CommandCenterScree
+nState' is from 'packag
+e:fresh_route/features/
+dashboard/command_cente
+r_screen.dart' ('lib/fe
+atures/dashboard/comman
+d_center_screen.dart').
+Try correcting the 
+name to the name of an 
+existing getter, or 
+defining a getter or 
+field named 'l'.
+            Text(l.star
+t_transit_to((m['name']
+ as String).split(',').
+first.toUpperCase()),
+                 ^
+lib/features/dashboard/
+command_center_screen.d
+art:436:23: Error: The 
+getter 'l' isn't 
+defined for the type '_
+CommandCenterScreenStat
+e'.
+ - '_CommandCenterScree
+nState' is from 'packag
+e:fresh_route/features/
+dashboard/command_cente
+r_screen.dart' ('lib/fe
+atures/dashboard/comman
+d_center_screen.dart').
+Try correcting the 
+name to the name of an 
+existing getter, or 
+defining a getter or 
+field named 'l'.
+          child: Text(l
+.choose_different, 
+style: const 
+TextStyle(color: AppThe
+me.textSecondary, 
+fontWeight: 
+FontWeight.w600, 
+fontSize: 12))),
+                      ^
+Target kernel_snapshot_
+program failed: 
+Exception
+
+
+FAILURE: Build failed 
+with an exception.
+
+* What went wrong:
+Execution failed for 
+task ':app:compileFlutt
+erBuildDebug'.
+> Process 'command 'D:\
+flutter_windows_3.41.2-
+stable\flutter\bin\flut
+ter.bat'' finished 
+with non-zero exit 
+value 1
+
+* Try:
+> Run with 
+--stacktrace option to 
+get the stack trace.
+> Run with --info or 
+--debug option to get 
+more log output.
+> Run with --scan to 
+get full insights.
+> Get more help at http
+s://help.gradle.org.
+
+BUILD FAILED in 1m 21s
+Running Gradle task 'assembleDebug'...                             84.5s
+Gradle task 
+assembleDebug failed 
+with exit code 1

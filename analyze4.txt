@@ -1,0 +1,48 @@
+﻿Analyzing frontend...                                           
+
+  error - Target of URI doesn't exist: 'package:flutter_gen/gen_l10n/app_localizations.dart' - lib\features\auth\auth_screen.dart:6:8 - uri_does_not_exist
+  error - Undefined name 'AppLocalizations' - lib\features\auth\auth_screen.dart:136:15 - undefined_identifier
+  error - Undefined class 'AppLocalizations' - lib\features\auth\auth_screen.dart:287:23 - undefined_class
+  error - Undefined class 'AppLocalizations' - lib\features\auth\auth_screen.dart:330:27 - undefined_class
+  error - Undefined class 'AppLocalizations' - lib\features\auth\auth_screen.dart:376:26 - undefined_class
+warning - Unused import: 'package:flutter_animate/flutter_animate.dart' - lib\features\dashboard\command_center_screen.dart:5:8 - unused_import
+warning - The value of the field '_temperature' isn't used - lib\features\dashboard\command_center_screen.dart:31:10 - unused_field
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\command_center_screen.dart:204:20 - curly_braces_in_flow_control_structures
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\command_center_screen.dart:214:24 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\command_center_screen.dart:214:28 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\command_center_screen.dart:223:42 - unnecessary_underscores
+   info - Angle brackets will be interpreted as HTML - lib\features\dashboard\in_transit_screen.dart:16:17 - unintended_html_in_doc_comment
+warning - The value of the field '_latestTruckPos' isn't used - lib\features\dashboard\in_transit_screen.dart:135:11 - unused_field
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:260:34 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:261:39 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:262:39 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:263:12 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:395:20 - curly_braces_in_flow_control_structures
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\in_transit_screen.dart:589:38 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\in_transit_screen.dart:589:42 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\in_transit_screen.dart:591:48 - unnecessary_underscores
+   info - The imported package 'google_maps_flutter_android' isn't a dependency of the importing package - lib\main.dart:3:8 - depend_on_referenced_packages
+   info - The imported package 'google_maps_flutter_platform_interface' isn't a dependency of the importing package - lib\main.dart:4:8 - depend_on_referenced_packages
+  error - Target of URI doesn't exist: 'package:flutter_gen/gen_l10n/app_localizations.dart' - lib\main.dart:6:8 - uri_does_not_exist
+  error - The values in a const list literal must be constants - lib\main.dart:56:9 - non_constant_list_element
+  error - Undefined name 'AppLocalizations' - lib\main.dart:56:9 - undefined_identifier
+
+flutter : 26 issues 
+found. (ran in 65.2s)
+At line:1 char:1
++ flutter analyze 
+--no-pub 2>&1 | 
+Out-File -Encoding 
+utf8 d:\freshroute ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (26 issues fou   
+ nd. (ran in 65.2s)    
+:String) [], Remot    
+eException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 

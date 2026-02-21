@@ -1,0 +1,114 @@
+﻿flutter : Unhandled 
+exception:
+At line:1 char:1
++ flutter pub get 2>&1 
+| Out-File -Encoding 
+utf8 
+d:\freshroute\pubget2. 
+...
++ ~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (Unhandled exc   
+ eption::String) []    
+, RemoteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+Error on line 40, 
+column 3: Duplicate 
+mapping key.
+   Γò╖
+40 Γöé   intl: ^0.20.2
+
+   Γöé   ^^^^
+   Γò╡
+#0      
+Loader._loadMapping (pa
+ckage:yaml/src/loader.d
+art:165:9)
+#1      
+Loader._loadNode (packa
+ge:yaml/src/loader.dart
+:88:35)
+#2      
+Loader._loadMapping (pa
+ckage:yaml/src/loader.d
+art:163:19)
+#3      
+Loader._loadNode (packa
+ge:yaml/src/loader.dart
+:88:35)
+#4      
+Loader._loadDocument (p
+ackage:yaml/src/loader.
+dart:68:20)
+#5      Loader.load (pa
+ckage:yaml/src/loader.d
+art:60:20)
+#6      
+loadYamlDocument (packa
+ge:yaml/yaml.dart:69:25
+)
+#7      loadYamlNode (p
+ackage:yaml/yaml.dart:5
+4:5)
+#8      loadYaml (packa
+ge:yaml/yaml.dart:41:5)
+#9      FlutterManifest
+.createFromString (pack
+age:flutter_tools/src/f
+lutter_manifest.dart:55
+:28)
+#10     FlutterManifest
+.createFromPath (packag
+e:flutter_tools/src/flu
+tter_manifest.dart:49:2
+8)
+#11     runInContext.<a
+nonymous closure> (pack
+age:flutter_tools/src/c
+ontext_runner.dart:226:
+44)
+#12     AppContext._gen
+erateIfNecessary.<anony
+mous closure> (package:
+flutter_tools/src/base/
+context.dart:108:42)
+#13     _LinkedHashMapM
+ixin.putIfAbsent (dart:
+_compact_hash:675:23)
+#14     AppContext._gen
+erateIfNecessary (packa
+ge:flutter_tools/src/ba
+se/context.dart:95:20)
+#15     AppContext.get 
+(package:flutter_tools/
+src/base/context.dart:1
+25:32)
+#16     featureFlags (p
+ackage:flutter_tools/sr
+c/features.dart:13:42)
+#17     run.<anonymous 
+closure> (package:flutt
+er_tools/runner.dart:55
+:40)
+#18     runInContext.ru
+nnerWrapper (package:fl
+utter_tools/src/context
+_runner.dart:78:18)
+<asynchronous 
+suspension>
+#19     AppContext.run.
+<anonymous closure> (pa
+ckage:flutter_tools/src
+/base/context.dart:154:
+19)
+<asynchronous 
+suspension>
+#20     main (package:f
+lutter_tools/executable
+.dart:103:3)
+<asynchronous 
+suspension>
