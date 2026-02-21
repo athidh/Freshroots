@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
@@ -10,6 +9,8 @@ import 'package:http/http.dart' as http;
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/freshness_gauge.dart';
 import '../../core/services/auth_provider.dart';
+import '../../core/utils/app_settings.dart';
+import '../../l10n/app_localizations.dart';
 import 'in_transit_screen.dart';
 
 class CommandCenterScreen extends StatefulWidget {
@@ -22,7 +23,6 @@ class CommandCenterScreen extends StatefulWidget {
 }
 
 class _CommandCenterScreenState extends State<CommandCenterScreen> {
-  // Use Completer for safe async map access
   final Completer<GoogleMapController> _mapCompleter = Completer<GoogleMapController>();
   final Set<Marker> _markers = {};
   LatLng? _userLocation;
@@ -33,7 +33,9 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
   final Map<String, Map<String, String>> _weatherCache = {};
   BitmapDescriptor? _marketIcon;
   BitmapDescriptor? _truckIcon;
+  bool _disposed = false;
 
+  // Pre-computed market list (built once in initState, not in build)
   static const List<Map<String, dynamic>> _southIndiaMarkets = [
     {'name': 'Koyambedu Market, Chennai', 'lat': 13.0694, 'lon': 80.1948, 'distance': '12 km', 'demand': 'High', 'price': '₹35/kg'},
     {'name': 'Madurai Mango Market', 'lat': 9.9252, 'lon': 78.1198, 'distance': '45 km', 'demand': 'Medium', 'price': '₹30/kg'},
@@ -45,21 +47,34 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
   @override
   void initState() {
     super.initState();
-    // Defer heavy work to after first frame
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _createCustomMarkers();
-      _getCurrentLocation();
-      _fetchAllMarketWeather();
-      _fetchTripData();
-    });
+    // Sequence all heavy work so microtask queue doesn't overflow
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initAsync());
+  }
+
+  /// Sequential init — prevents microtask loop overflow.
+  Future<void> _initAsync() async {
+    if (_disposed) return;
+    await _createCustomMarkers();
+    if (_disposed) return;
+    await _getCurrentLocation();
+    if (_disposed) return;
+    // Fetch weather sequentially with delay between each
+    await _fetchAllMarketWeather();
+    if (_disposed) return;
+    await _fetchTripData();
   }
 
   @override
   void dispose() {
-    // Properly dispose the map controller
-    _mapCompleter.future.then((c) => c.dispose());
+    _disposed = true;
+    // Guard against never-completed completer
+    if (_mapCompleter.isCompleted) {
+      _mapCompleter.future.then((c) => c.dispose());
+    }
     super.dispose();
   }
+
+  // ── Marker icons ─────────────────────────────────────────────
 
   Future<void> _createCustomMarkers() async {
     _marketIcon = await _createIcon('🏪', Colors.green.shade700);
@@ -86,10 +101,14 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
     return BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), width: 48, height: 48);
   }
 
+  // ── Weather ──────────────────────────────────────────────────
+
   Future<void> _fetchAllMarketWeather() async {
     for (final m in _southIndiaMarkets) {
-      if (!mounted) return;
+      if (_disposed || !mounted) return;
       await _fetchWeatherFor(m['name'] as String, m['lat'] as double, m['lon'] as double);
+      // Small gap between requests to avoid flooding the microtask queue
+      await Future.delayed(const Duration(milliseconds: 50));
     }
   }
 
@@ -99,18 +118,19 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
           .timeout(const Duration(seconds: 5));
       if (res.statusCode == 200 && mounted) {
         final data = json.decode(res.body);
-        setState(() {
-          _weatherCache[name] = {
-            'temp': data['temp'] as String,
-            'desc': data['description'] as String,
-            'wind': data['wind'] as String,
-            'humidity': '${data['humidity']}%',
-          };
-        });
-        _refreshMarkers();
+        _weatherCache[name] = {
+          'temp': data['temp'] as String,
+          'desc': data['description'] as String,
+          'wind': data['wind'] as String,
+          'humidity': '${data['humidity']}%',
+        };
+        // Batch: don't call _refreshMarkers here, single setState after loop
+        if (mounted) setState(() {});
       }
     } catch (_) {}
   }
+
+  // ── Location ─────────────────────────────────────────────────
 
   Future<void> _getCurrentLocation() async {
     try {
@@ -129,7 +149,7 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
         setState(() { _userLocation = LatLng(position.latitude, position.longitude); _locationLoading = false; });
         _refreshMarkers();
         _animateCameraToUser();
-        _fetchWeatherFor('_user', position.latitude, position.longitude);
+        await _fetchWeatherFor('_user', position.latitude, position.longitude);
       }
     } catch (_) {
       try {
@@ -145,7 +165,7 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
   }
 
   Future<void> _animateCameraToUser() async {
-    if (_userLocation == null) return;
+    if (_userLocation == null || !_mapCompleter.isCompleted) return;
     final controller = await _mapCompleter.future;
     controller.animateCamera(CameraUpdate.newCameraPosition(
       CameraPosition(target: _userLocation!, zoom: 12)));
@@ -158,13 +178,16 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
     }
   }
 
+  // ── Markers ──────────────────────────────────────────────────
+
   void _refreshMarkers() {
+    final l = AppLocalizations.of(context);
     _markers.clear();
     if (_userLocation != null) {
       _markers.add(Marker(
         markerId: const MarkerId('user'), position: _userLocation!,
         icon: _truckIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-        infoWindow: const InfoWindow(title: '🚛 You are here'),
+        infoWindow: InfoWindow(title: '🚛 ${l?.you_are_here ?? "You are here"}'),
       ));
     }
     for (int i = 0; i < _southIndiaMarkets.length; i++) {
@@ -176,7 +199,7 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
         icon: _marketIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
         infoWindow: InfoWindow(
           title: '🏪 ${m['name']}',
-          snippet: w != null ? '${m['price']} • ${w['temp']} ${w['desc']}' : '${m['price']} • ${m['demand']} demand',
+          snippet: w != null ? '${m['price']} • ${w['temp']} ${w['desc']}' : '${m['price']} • ${m['demand']}',
         ),
         onTap: () => _selectMarket(m),
       ));
@@ -190,8 +213,10 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
     if (!_weatherCache.containsKey(name)) {
       _fetchWeatherFor(name, market['lat'] as double, market['lon'] as double);
     }
-    _mapCompleter.future.then((c) => c.animateCamera(CameraUpdate.newLatLngZoom(
-      LatLng(market['lat'] as double, market['lon'] as double), 13)));
+    if (_mapCompleter.isCompleted) {
+      _mapCompleter.future.then((c) => c.animateCamera(CameraUpdate.newLatLngZoom(
+        LatLng(market['lat'] as double, market['lon'] as double), 13)));
+    }
   }
 
   Future<void> _fetchTripData() async {
@@ -208,7 +233,6 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
     } catch (_) {}
   }
 
-  /// Navigate with fade transition to give map engine time to reset
   void _navigateToTransit(Map<String, dynamic> market) {
     Navigator.push(context, PageRouteBuilder(
       pageBuilder: (_, __, ___) => InTransitScreen(
@@ -226,8 +250,15 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
     ));
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  //  BUILD
+  // ═══════════════════════════════════════════════════════════════
+
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context)!;
+    final settings = context.watch<AppSettings>();
+
     return Scaffold(
       body: Column(
         children: [
@@ -237,10 +268,10 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
                 SizedBox.expand(
                   child: _locationLoading
                       ? Container(color: Colors.grey.shade100,
-                          child: const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                            CircularProgressIndicator(color: AppTheme.forestGreen),
-                            SizedBox(height: 12),
-                            Text('Getting your location...', style: TextStyle(color: AppTheme.textSecondary)),
+                          child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            const CircularProgressIndicator(color: AppTheme.forestGreen),
+                            const SizedBox(height: 12),
+                            Text(l.getting_location, style: const TextStyle(color: AppTheme.textSecondary)),
                           ])))
                       : GoogleMap(
                           initialCameraPosition: CameraPosition(
@@ -264,46 +295,56 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
                           onTap: (latLng) {
                             setState(() {
                               _selectedMarket = {
-                                'name': 'Custom Location', 'lat': latLng.latitude, 'lon': latLng.longitude,
-                                'distance': 'Custom', 'demand': 'Unknown', 'price': 'Market Rate',
+                                'name': l.custom_location, 'lat': latLng.latitude, 'lon': latLng.longitude,
+                                'distance': '—', 'demand': '—', 'price': '—',
                               };
                               _markers.removeWhere((m) => m.markerId.value == 'custom');
                               _markers.add(Marker(
                                 markerId: const MarkerId('custom'), position: latLng,
                                 icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-                                infoWindow: const InfoWindow(title: 'Custom Destination'),
+                                infoWindow: InfoWindow(title: l.custom_dest),
                               ));
                             });
-                            _fetchWeatherFor('Custom Location', latLng.latitude, latLng.longitude);
+                            _fetchWeatherFor(l.custom_location, latLng.latitude, latLng.longitude);
                           },
                         ),
                 ),
-                // Top bar
+
+                // ── Top bar ──
                 SafeArea(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: Row(children: [
                       _circleBtn(Icons.arrow_back_rounded, Colors.black87, () => Navigator.pop(context)),
                       const Spacer(),
-                      Container(
+                      Flexible(child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24),
                           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)]),
-                        child: Row(children: [
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
                           Container(width: 8, height: 8, decoration: const BoxDecoration(color: AppTheme.forestGreen, shape: BoxShape.circle)),
                           const SizedBox(width: 8),
-                          Text(widget.produce, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                          Flexible(child: Text(widget.produce, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                            maxLines: 1, overflow: TextOverflow.ellipsis)),
                           if (_weatherCache.containsKey('_user')) ...[
                             const SizedBox(width: 8),
                             Text(_weatherCache['_user']!['temp']!, style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.sunsetOrange, fontSize: 12)),
                           ],
                         ]),
+                      )),
+                      const SizedBox(width: 8),
+                      // ── Dark mode toggle ──
+                      _circleBtn(
+                        settings.isDarkMode ? Icons.wb_sunny_rounded : Icons.nightlight_round,
+                        settings.isDarkMode ? AppTheme.sunsetOrange : Colors.blueGrey,
+                        () => settings.toggleTheme(),
                       ),
                       const SizedBox(width: 8),
                       _circleBtn(Icons.my_location_rounded, AppTheme.infoBlue, _getCurrentLocation),
                     ]),
                   ),
                 ),
+
                 if (!_locationLoading)
                   Positioned(left: 16, bottom: 16, child: Container(
                     padding: const EdgeInsets.all(10),
@@ -314,11 +355,13 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
               ],
             ),
           ),
-          _selectedMarket != null ? _buildSelectedSheet() : _buildMarketListSheet(),
+          _selectedMarket != null ? _buildSelectedSheet(l) : _buildMarketListSheet(l),
         ],
       ),
     );
   }
+
+  // ── Helpers ──────────────────────────────────────────────────
 
   Widget _circleBtn(IconData icon, Color color, VoidCallback onTap) {
     return GestureDetector(onTap: onTap, child: Container(
@@ -329,7 +372,7 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
     ));
   }
 
-  Widget _buildMarketListSheet() {
+  Widget _buildMarketListSheet(AppLocalizations l) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       decoration: const BoxDecoration(color: Colors.white,
@@ -337,10 +380,11 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
       child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
         Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
         const SizedBox(height: 8),
-        const Row(children: [
-          Icon(Icons.store_mall_directory_rounded, color: AppTheme.forestGreen, size: 18),
-          SizedBox(width: 8),
-          Text('Select Market Destination', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+        Row(children: [
+          const Icon(Icons.store_mall_directory_rounded, color: AppTheme.forestGreen, size: 18),
+          const SizedBox(width: 8),
+          Expanded(child: Text(l.select_market, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+            maxLines: 2, overflow: TextOverflow.ellipsis)),
         ]),
         const SizedBox(height: 8),
         SizedBox(
@@ -380,7 +424,7 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
     );
   }
 
-  Widget _buildSelectedSheet() {
+  Widget _buildSelectedSheet(AppLocalizations l) {
     final m = _selectedMarket!;
     final w = _weatherCache[m['name'] as String];
     return Container(
@@ -412,7 +456,7 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
             child: Row(children: [
               const Icon(Icons.cloud_rounded, color: AppTheme.infoBlue, size: 16),
               const SizedBox(width: 8),
-              Expanded(child: Text('${w['temp']} • ${w['desc']} • Wind: ${w['wind']} • Humidity: ${w['humidity']}',
+              Expanded(child: Text('${w['temp']} • ${w['desc']} • ${l.wind}: ${w['wind']} • ${l.humidity}: ${w['humidity']}',
                   style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.infoBlue))),
             ]),
           ),
@@ -425,13 +469,14 @@ class _CommandCenterScreenState extends State<CommandCenterScreen> {
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             const Icon(Icons.navigation_rounded, size: 18, color: Colors.white),
             const SizedBox(width: 8),
-            Text('START TRANSIT TO ${(m['name'] as String).split(',').first.toUpperCase()}',
-                style: const TextStyle(fontWeight: FontWeight.w800, letterSpacing: 0.5, fontSize: 12, color: Colors.white)),
+            Flexible(child: Text(l.start_transit_to((m['name'] as String).split(',').first.toUpperCase()),
+                style: const TextStyle(fontWeight: FontWeight.w800, letterSpacing: 0.5, fontSize: 12, color: Colors.white),
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
           ]),
         )),
         const SizedBox(height: 4),
         TextButton(onPressed: () => setState(() => _selectedMarket = null),
-          child: const Text('Choose Different', style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.w600, fontSize: 12))),
+          child: Text(l.choose_different, style: const TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.w600, fontSize: 12))),
       ])),
     );
   }

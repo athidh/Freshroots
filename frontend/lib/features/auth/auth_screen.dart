@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import '../../l10n/app_localizations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_provider.dart';
+import '../../core/services/locale_provider.dart';
 import '../dashboard/user_dashboard_screen.dart';
 import 'animated_showcase_background.dart';
 
@@ -131,6 +133,7 @@ class _AuthScreenState extends State<AuthScreen>
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final l = AppLocalizations.of(context)!;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -188,6 +191,13 @@ class _AuthScreenState extends State<AuthScreen>
             ).animate().fadeIn(delay: 200.ms).moveX(begin: -20, end: 0),
           ),
 
+          // ── Language selector row ──
+          Positioned(
+            bottom: _getSheetHeight(context) + 16,
+            left: 0,
+            right: 0,
+            child: _buildLanguageSelector(context),
+          ),
 
 
           // ── Frosted glass bottom sheet ──
@@ -240,7 +250,7 @@ class _AuthScreenState extends State<AuthScreen>
                         const SizedBox(height: 16),
 
                         // Tab bar
-                        _buildTabBar(),
+                        _buildTabBar(l),
                         const SizedBox(height: 20),
 
                         // Tab content
@@ -248,8 +258,8 @@ class _AuthScreenState extends State<AuthScreen>
                           child: TabBarView(
                             controller: _tabController,
                             children: [
-                              _buildSignUpForm(),
-                              _buildLoginForm(),
+                              _buildSignUpForm(l),
+                              _buildLoginForm(l),
                             ],
                           ),
                         ),
@@ -274,7 +284,7 @@ class _AuthScreenState extends State<AuthScreen>
     return screenHeight * 0.42;
   }
 
-  Widget _buildTabBar() {
+  Widget _buildTabBar(AppLocalizations l) {
     return Container(
       height: 48,
       decoration: BoxDecoration(
@@ -309,15 +319,15 @@ class _AuthScreenState extends State<AuthScreen>
           fontWeight: FontWeight.w500,
           fontSize: 14,
         ),
-        tabs: const [
-          Tab(text: 'Sign Up'),
-          Tab(text: 'Login'),
+        tabs: [
+          Tab(text: l.tab_signup),
+          Tab(text: l.tab_login),
         ],
       ),
     );
   }
 
-  Widget _buildSignUpForm() {
+  Widget _buildSignUpForm(AppLocalizations l) {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       child: Column(
@@ -325,20 +335,20 @@ class _AuthScreenState extends State<AuthScreen>
           const SizedBox(height: 4),
           _GlassTextField(
             controller: _signUpUsernameController,
-            label: 'Username',
+            label: l.username_label,
             icon: Icons.person_outline_rounded,
           ),
           const SizedBox(height: 12),
           _GlassTextField(
             controller: _signUpEmailController,
-            label: 'Email Address',
+            label: l.email_label,
             icon: Icons.email_outlined,
             keyboardType: TextInputType.emailAddress,
           ),
           const SizedBox(height: 12),
           _GlassTextField(
             controller: _signUpPasswordController,
-            label: 'Password',
+            label: l.password_label,
             icon: Icons.lock_outline_rounded,
             isPassword: true,
             obscure: _obscurePassword,
@@ -346,15 +356,15 @@ class _AuthScreenState extends State<AuthScreen>
                 setState(() => _obscurePassword = !_obscurePassword),
           ),
           const SizedBox(height: 20),
-          _buildPrimaryButton('Create Account', Icons.arrow_forward_rounded),
+          _buildPrimaryButton(l.create_account_btn, Icons.arrow_forward_rounded),
           const SizedBox(height: 16),
-          _buildDividerWithText('or continue with'),
+          _buildDividerWithText(l.or_continue_with),
           const SizedBox(height: 16),
           _buildSocialButtons(),
           const SizedBox(height: 14),
           _buildSwitchPrompt(
-            'Already have an account? ',
-            'Login',
+            l.have_account,
+            l.tab_login,
             () => _tabController.animateTo(1),
           ),
           const SizedBox(height: 8),
@@ -363,14 +373,14 @@ class _AuthScreenState extends State<AuthScreen>
     );
   }
 
-  Widget _buildLoginForm() {
+  Widget _buildLoginForm(AppLocalizations l) {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       child: Column(
         children: [
           const SizedBox(height: 4),
           Text(
-            'Welcome back!',
+            l.welcome_back,
             style: GoogleFonts.outfit(
               fontSize: 22,
               fontWeight: FontWeight.w800,
@@ -379,7 +389,7 @@ class _AuthScreenState extends State<AuthScreen>
           ),
           const SizedBox(height: 4),
           Text(
-            'Sign in to manage your deliveries',
+            l.sign_in_subtitle,
             style: GoogleFonts.outfit(
               fontSize: 13,
               color: AppTheme.textSecondary,
@@ -388,14 +398,14 @@ class _AuthScreenState extends State<AuthScreen>
           const SizedBox(height: 20),
           _GlassTextField(
             controller: _loginEmailController,
-            label: 'Email Address',
+            label: l.email_label,
             icon: Icons.email_outlined,
             keyboardType: TextInputType.emailAddress,
           ),
           const SizedBox(height: 12),
           _GlassTextField(
             controller: _loginPasswordController,
-            label: 'Password',
+            label: l.password_label,
             icon: Icons.lock_outline_rounded,
             isPassword: true,
             obscure: _obscureLoginPassword,
@@ -414,7 +424,7 @@ class _AuthScreenState extends State<AuthScreen>
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               child: Text(
-                'Forgot Password?',
+                l.forgot_password,
                 style: GoogleFonts.outfit(
                   color: AppTheme.sunsetOrange,
                   fontWeight: FontWeight.w600,
@@ -424,15 +434,15 @@ class _AuthScreenState extends State<AuthScreen>
             ),
           ),
           const SizedBox(height: 12),
-          _buildPrimaryButton('Login', Icons.login_rounded),
+          _buildPrimaryButton(l.login_btn, Icons.login_rounded),
           const SizedBox(height: 16),
-          _buildDividerWithText('or continue with'),
+          _buildDividerWithText(l.or_continue_with),
           const SizedBox(height: 16),
           _buildSocialButtons(),
           const SizedBox(height: 14),
           _buildSwitchPrompt(
-            "Don't have an account? ",
-            'Sign Up',
+            l.no_account,
+            l.tab_signup,
             () => _tabController.animateTo(0),
           ),
           const SizedBox(height: 8),
@@ -585,7 +595,73 @@ class _AuthScreenState extends State<AuthScreen>
   }
 }
 
+// ── Language selector (extension on _AuthScreenState) ──
 
+extension _LanguageSelector on _AuthScreenState {
+  static const _langs = [
+    {'code': 'en', 'label': 'EN', 'flag': '🇺🇸'},
+    {'code': 'hi', 'label': 'हि', 'flag': '🇮🇳'},
+    {'code': 'ta', 'label': 'த', 'flag': '🇮🇳'},
+    {'code': 'ml', 'label': 'മ', 'flag': '🇮🇳'},
+  ];
+
+  Widget _buildLanguageSelector(BuildContext context) {
+    final provider = context.watch<LocaleProvider>();
+    final current = provider.locale.languageCode;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: _langs.map((lang) {
+        final isActive = current == lang['code'];
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: GestureDetector(
+            onTap: () => provider.setLocale(Locale(lang['code']!)),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: isActive
+                    ? Colors.white
+                    : Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: isActive
+                      ? AppTheme.forestGreen
+                      : Colors.white.withValues(alpha: 0.3),
+                  width: isActive ? 2 : 1,
+                ),
+                boxShadow: isActive
+                    ? [
+                        BoxShadow(
+                          color: AppTheme.forestGreen.withValues(alpha: 0.3),
+                          blurRadius: 8,
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(lang['flag']!, style: const TextStyle(fontSize: 14)),
+                  const SizedBox(width: 4),
+                  Text(
+                    lang['label']!,
+                    style: GoogleFonts.outfit(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: isActive ? AppTheme.forestGreen : Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    ).animate().fadeIn(delay: 300.ms).moveY(begin: 10, end: 0);
+  }
+}
 // ── Premium glass text field ──
 
 class _GlassTextField extends StatefulWidget {

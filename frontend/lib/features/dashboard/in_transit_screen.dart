@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'dart:convert' show jsonDecode;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show compute;
@@ -8,6 +8,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_provider.dart';
+import '../../l10n/app_localizations.dart';
 import '../profile/trip_summary_screen.dart';
 
 // ── Top-level functions for Isolate via compute() ──────────────────────
@@ -51,6 +52,29 @@ List<double> computeBoundsIsolate(List<List<double>> pts) {
   return [s, w, n, e];
 }
 
+/// Parses the Directions API JSON response in a background isolate.
+/// Returns a Map with 'encoded' polyline, 'eta', 'distance'.
+Map<String, String> parseDirectionsJsonIsolate(String responseBody) {
+  final data = jsonDecode(responseBody);
+  if ((data['routes'] as List).isEmpty) return {};
+  final route = data['routes'][0];
+  final leg = route['legs'][0];
+  return {
+    'encoded': route['overview_polyline']['points'] as String,
+    'eta': leg['duration']['text'] as String,
+    'distance': leg['distance']['text'] as String,
+  };
+}
+
+/// Parses weather JSON in a background isolate.
+Map<String, String> parseWeatherJsonIsolate(String responseBody) {
+  final d = jsonDecode(responseBody);
+  return {
+    'temp': d['temp']?.toString() ?? '',
+    'description': d['description']?.toString() ?? '',
+  };
+}
+
 class InTransitScreen extends StatefulWidget {
   final String produce;
   final String? tripId;
@@ -83,13 +107,13 @@ class _InTransitScreenState extends State<InTransitScreen>
   Set<Polyline> _polylines = {};
   List<LatLng> _routePoints = [];
   bool _showWarning = false;
-  bool _mapReady = false;
   double _freshness = 0.94;
   String _temperature = '28°C';
   String _spoilageRisk = 'Low';
   String _eta = 'Calculating...';
   String _distanceLeft = '...';
   Timer? _pollTimer;
+  Timer? _simTimer;
   double _truckProgress = 0.0;
   late AnimationController _truckController;
 
@@ -105,10 +129,11 @@ class _InTransitScreenState extends State<InTransitScreen>
   String _originWeather = '';
   String _destWeather = '';
 
-  // ── Performance: Camera debounce & drag detection ──────────────────
-  Timer? _cameraDebounce;
+  // ── Performance controls ──────────────────────────────────────────
   DateTime _lastCameraUpdate = DateTime(2000);
+  DateTime _lastSetState = DateTime(2000);
   bool _userDragging = false;
+  LatLng? _latestTruckPos; // Internal tracking (updated every frame)
 
   @override
   void initState() {
@@ -148,12 +173,15 @@ class _InTransitScreenState extends State<InTransitScreen>
 
   @override
   void dispose() {
+    // ── Explicit cleanup of every subscription / timer / controller ──
     _truckController.removeListener(_onTruckUpdate);
     _truckController.dispose();
     _pollTimer?.cancel();
-    _cameraDebounce?.cancel();
+    _simTimer?.cancel();
     // Properly dispose map controller
-    _mapCompleter.future.then((c) => c.dispose());
+    if (_mapCompleter.isCompleted) {
+      _mapCompleter.future.then((c) => c.dispose());
+    }
     super.dispose();
   }
 
@@ -194,7 +222,7 @@ class _InTransitScreenState extends State<InTransitScreen>
           'http://10.0.2.127:5000/api/weather?lat=${widget.originLat}&lon=${widget.originLng}'))
           .timeout(const Duration(seconds: 5));
       if (oRes.statusCode == 200 && mounted) {
-        final d = json.decode(oRes.body);
+        final d = await compute(parseWeatherJsonIsolate, oRes.body);
         setState(() => _originWeather = '${d['temp']} ${d['description']}');
       }
     } catch (_) {}
@@ -203,10 +231,10 @@ class _InTransitScreenState extends State<InTransitScreen>
           'http://10.0.2.127:5000/api/weather?lat=${widget.destLat}&lon=${widget.destLng}'))
           .timeout(const Duration(seconds: 5));
       if (dRes.statusCode == 200 && mounted) {
-        final d = json.decode(dRes.body);
+        final d = await compute(parseWeatherJsonIsolate, dRes.body);
         setState(() {
           _destWeather = '${d['temp']} ${d['description']}';
-          _temperature = d['temp'] as String;
+          _temperature = d['temp'] ?? '28°C';
         });
       }
     } catch (_) {}
@@ -251,18 +279,14 @@ class _InTransitScreenState extends State<InTransitScreen>
           '&key=AIzaSyCZb9hp1XXwVnFm_cWBpHpQzw4J-FQUcOE&mode=driving&traffic_model=best_guess&departure_time=now';
       final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
-        final data = json.decode(res.body);
-        if ((data['routes'] as List).isNotEmpty) {
-          final route = data['routes'][0];
-          final encoded = route['overview_polyline']['points'] as String;
-
-          // Decode polyline in a background isolate via compute()
-          final rawPoints = await compute(decodePolylineIsolate, encoded);
+        // Parse JSON in background isolate
+        final parsed = await compute(parseDirectionsJsonIsolate, res.body);
+        if (parsed.isNotEmpty) {
+          // Decode polyline in background isolate
+          final rawPoints = await compute(decodePolylineIsolate, parsed['encoded']!);
           final decodedPoints = rawPoints.map((p) => LatLng(p[0], p[1])).toList();
 
-          final leg = route['legs'][0];
-
-          // Build polyline fully before updating state (optimization)
+          // Build polyline fully before updating state
           final newPolyline = Polyline(
             polylineId: const PolylineId('route'),
             points: decodedPoints,
@@ -273,8 +297,8 @@ class _InTransitScreenState extends State<InTransitScreen>
           if (mounted) {
             setState(() {
               _routePoints = decodedPoints;
-              _eta = leg['duration']['text'] as String;
-              _distanceLeft = leg['distance']['text'] as String;
+              _eta = parsed['eta']!;
+              _distanceLeft = parsed['distance']!;
               _polylines = {newPolyline};
             });
             // Animate camera after state is set
@@ -324,20 +348,25 @@ class _InTransitScreenState extends State<InTransitScreen>
     final lng = _routePoints[idx].longitude + (_routePoints[idx + 1].longitude - _routePoints[idx].longitude) * t;
     final truckPos = LatLng(lat, lng);
 
-    _markers.removeWhere((m) => m.markerId.value == 'truck');
-    _markers.add(Marker(
-      markerId: const MarkerId('truck'),
-      position: truckPos,
-      icon: _truckIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-      infoWindow: InfoWindow(title: '🚛 ${widget.produce}', snippet: '${(_freshness * 100).toInt()}% fresh • ${_speedMultiplier}x'),
-      zIndex: 10,
-    ));
-    setState(() {});
+    // Always track latest position internally (zero cost, no rebuild)
+    _latestTruckPos = truckPos;
+
+    // ── Throttled setState: rebuild UI at most once every 3 seconds ──
+    final now = DateTime.now();
+    if (now.difference(_lastSetState).inSeconds >= 3) {
+      _lastSetState = now;
+      _markers.removeWhere((m) => m.markerId.value == 'truck');
+      _markers.add(Marker(
+        markerId: const MarkerId('truck'),
+        position: truckPos,
+        icon: _truckIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        infoWindow: InfoWindow(title: '🚛 ${widget.produce}', snippet: '${(_freshness * 100).toInt()}% fresh • ${_speedMultiplier}x'),
+      ));
+      setState(() {});
+    }
 
     // ── Throttled camera follow (3-second debounce) ──────────────────
-    // Skip auto-follow entirely if the user is manually dragging the map.
     if (_userDragging || !_mapCompleter.isCompleted) return;
-    final now = DateTime.now();
     if (now.difference(_lastCameraUpdate).inSeconds >= 3) {
       _lastCameraUpdate = now;
       _mapCompleter.future.then((c) => c.animateCamera(CameraUpdate.newLatLng(truckPos)));
@@ -373,17 +402,25 @@ class _InTransitScreenState extends State<InTransitScreen>
     } catch (_) {}
   }
 
-  void _simulateJourney() async {
-    await Future.delayed(const Duration(seconds: 6));
-    if (mounted) setState(() { _spoilageRisk = 'Medium'; _showWarning = true; });
-    for (int i = 0; i < 20; i++) {
-      await Future.delayed(const Duration(seconds: 3));
-      if (mounted) setState(() => _freshness -= 0.005);
-    }
+  /// Simulation via cancellable Timer — no dangling async loops.
+  void _simulateJourney() {
+    int tick = 0;
+    _simTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!mounted) { timer.cancel(); return; }
+      tick++;
+      if (tick == 2) {
+        setState(() { _spoilageRisk = 'Medium'; _showWarning = true; });
+      } else if (tick > 2 && tick <= 22) {
+        setState(() => _freshness -= 0.005);
+      } else if (tick > 22) {
+        timer.cancel();
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context)!;
     return Scaffold(
       body: Column(
         children: [
@@ -391,32 +428,34 @@ class _InTransitScreenState extends State<InTransitScreen>
           Expanded(
             child: Stack(
               children: [
-                SizedBox.expand(
-                  child: GoogleMap(
-                    initialCameraPosition: CameraPosition(
-                      target: LatLng((widget.originLat + widget.destLat) / 2, (widget.originLng + widget.destLng) / 2),
-                      zoom: 12),
-                    mapType: MapType.normal,
-                    markers: _markers,
-                    polylines: _polylines,
-                    trafficEnabled: true,
-                    onMapCreated: (c) {
-                      if (!_mapCompleter.isCompleted) _mapCompleter.complete(c);
-                      setState(() => _mapReady = true);
-                    },
-                    // ── Drag detection: stop auto-follow when user pans ──
-                    onCameraMoveStarted: () {
-                      if (!_userDragging) setState(() => _userDragging = true);
-                    },
-                    myLocationEnabled: true,
-                    myLocationButtonEnabled: false,
-                    zoomControlsEnabled: false,
-                    compassEnabled: true,
-                    rotateGesturesEnabled: true,
-                    scrollGesturesEnabled: true,
-                    tiltGesturesEnabled: true,
-                    zoomGesturesEnabled: true,
-                    minMaxZoomPreference: MinMaxZoomPreference.unbounded,
+                // ── RepaintBoundary isolates map rendering from UI overlays ──
+                RepaintBoundary(
+                  child: SizedBox.expand(
+                    child: GoogleMap(
+                      initialCameraPosition: CameraPosition(
+                        target: LatLng((widget.originLat + widget.destLat) / 2, (widget.originLng + widget.destLng) / 2),
+                        zoom: 12),
+                      mapType: MapType.normal,
+                      markers: _markers,
+                      polylines: _polylines,
+                      trafficEnabled: true,
+                      onMapCreated: (c) {
+                        if (!_mapCompleter.isCompleted) _mapCompleter.complete(c);
+                      },
+                      // ── Drag detection: stop auto-follow when user pans ──
+                      onCameraMoveStarted: () {
+                        if (!_userDragging) setState(() => _userDragging = true);
+                      },
+                      myLocationEnabled: true,
+                      myLocationButtonEnabled: false,
+                      zoomControlsEnabled: false,
+                      compassEnabled: true,
+                      rotateGesturesEnabled: true,
+                      scrollGesturesEnabled: true,
+                      tiltGesturesEnabled: true,
+                      zoomGesturesEnabled: true,
+                      minMaxZoomPreference: MinMaxZoomPreference.unbounded,
+                    ),
                   ),
                 ),
 
@@ -512,7 +551,7 @@ class _InTransitScreenState extends State<InTransitScreen>
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(widget.destName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                       maxLines: 1, overflow: TextOverflow.ellipsis),
-                  Text('ETA: $_eta • $_distanceLeft', style: const TextStyle(fontSize: 12, color: AppTheme.forestGreen, fontWeight: FontWeight.w600)),
+                  Text('${l.eta}: $_eta • $_distanceLeft', style: const TextStyle(fontSize: 12, color: AppTheme.forestGreen, fontWeight: FontWeight.w600)),
                 ])),
               ]),
               if (_destWeather.isNotEmpty) ...[
@@ -523,9 +562,9 @@ class _InTransitScreenState extends State<InTransitScreen>
                   child: Row(children: [
                     const Icon(Icons.cloud, color: AppTheme.infoBlue, size: 14),
                     const SizedBox(width: 6),
-                    if (_originWeather.isNotEmpty) Text('Start: $_originWeather', style: const TextStyle(fontSize: 10, color: AppTheme.infoBlue)),
+                    if (_originWeather.isNotEmpty) Text('${l.weather_start}: $_originWeather', style: const TextStyle(fontSize: 10, color: AppTheme.infoBlue)),
                     if (_originWeather.isNotEmpty) const Text(' → ', style: TextStyle(fontSize: 10, color: AppTheme.infoBlue)),
-                    Expanded(child: Text('Dest: $_destWeather', style: const TextStyle(fontSize: 10, color: AppTheme.infoBlue, fontWeight: FontWeight.w600),
+                    Expanded(child: Text('${l.weather_dest}: $_destWeather', style: const TextStyle(fontSize: 10, color: AppTheme.infoBlue, fontWeight: FontWeight.w600),
                         maxLines: 1, overflow: TextOverflow.ellipsis)),
                   ]),
                 ),
@@ -544,7 +583,7 @@ class _InTransitScreenState extends State<InTransitScreen>
                   onPressed: () {},
                   style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                  child: const Text('SOS', style: TextStyle(fontWeight: FontWeight.w800)),
+                  child: Text(l.sos, style: const TextStyle(fontWeight: FontWeight.w800)),
                 ))),
                 const SizedBox(width: 10),
                 Expanded(flex: 2, child: SizedBox(height: 44, child: ElevatedButton(
@@ -555,7 +594,7 @@ class _InTransitScreenState extends State<InTransitScreen>
                   )),
                   style: ElevatedButton.styleFrom(backgroundColor: AppTheme.forestGreen,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                  child: const Text('ARRIVED', style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white, fontSize: 14)),
+                  child: Text(l.arrived, style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.white, fontSize: 14)),
                 ))),
               ]),
             ])),
