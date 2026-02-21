@@ -5,7 +5,13 @@ import '../../core/theme/app_theme.dart';
 import '../auth/splash_screen.dart';
 
 class TripSummaryScreen extends StatefulWidget {
-  const TripSummaryScreen({super.key});
+  final String produce;
+  final double freshness;
+  const TripSummaryScreen({
+    super.key,
+    this.produce = 'Produce',
+    this.freshness = 0.89,
+  });
 
   @override
   State<TripSummaryScreen> createState() => _TripSummaryScreenState();
@@ -30,8 +36,17 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
     super.dispose();
   }
 
+  String get _gradeLabel {
+    if (widget.freshness >= 0.85) return 'EXCELLENT';
+    if (widget.freshness >= 0.70) return 'GOOD';
+    if (widget.freshness >= 0.50) return 'FAIR';
+    return 'POOR';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final freshnessPercent = (widget.freshness * 100).toInt();
+
     return Scaffold(
       body: Stack(
         children: [
@@ -48,28 +63,29 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
             },
           ),
           SafeArea(
-            child: Padding(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 children: [
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 32),
 
                   // Success icon
                   Container(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: AppTheme.forestGreen.withValues(alpha: 0.1),
                       shape: BoxShape.circle,
                     ),
                     child: Container(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(14),
                       decoration: const BoxDecoration(
                         gradient: AppTheme.primaryGradient,
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
                         Icons.check_rounded,
-                        size: 40,
+                        size: 36,
                         color: Colors.white,
                       ),
                     ),
@@ -83,11 +99,11 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
                       )
                       .fadeIn(),
 
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 20),
 
                   Text(
                     'Delivery Successful!',
-                    style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.w800,
                           letterSpacing: -0.5,
                         ),
@@ -95,30 +111,31 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
 
                   const SizedBox(height: 4),
 
-                  const Text(
-                    'AI optimized your route for maximum value',
-                    style: TextStyle(
+                  Text(
+                    '${widget.produce} delivered with AI-optimized routing',
+                    style: const TextStyle(
                       color: AppTheme.textSecondary,
-                      fontSize: 14,
+                      fontSize: 13,
                     ),
+                    textAlign: TextAlign.center,
                   ).animate().fadeIn(delay: 400.ms),
 
-                  const SizedBox(height: 36),
+                  const SizedBox(height: 28),
 
                   // Freshness Score Card
-                  _buildScoreCard(),
+                  _buildScoreCard(freshnessPercent),
 
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 20),
 
-                  // Stats Grid
+                  // Stats Grid — 2x2
                   _buildStatGrid(),
 
-                  const Spacer(),
+                  const SizedBox(height: 28),
 
                   // Action buttons
                   Container(
                     width: double.infinity,
-                    height: 56,
+                    height: 52,
                     decoration: BoxDecoration(
                       gradient: AppTheme.primaryGradient,
                       borderRadius: BorderRadius.circular(16),
@@ -164,12 +181,12 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
                     ),
                   ),
 
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
 
                   OutlinedButton(
                     onPressed: () {},
                     style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 52),
+                      minimumSize: const Size(double.infinity, 48),
                       foregroundColor: AppTheme.forestGreen,
                       side: BorderSide(
                         color: AppTheme.forestGreen.withValues(alpha: 0.2),
@@ -191,7 +208,7 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
                     ),
                   ),
 
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -201,10 +218,10 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
     );
   }
 
-  Widget _buildScoreCard() {
+  Widget _buildScoreCard(int freshnessPercent) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 24),
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 24),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -230,37 +247,37 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           ShaderMask(
             shaderCallback: (bounds) => const LinearGradient(
               colors: [AppTheme.forestGreen, AppTheme.forestGreenLight],
             ).createShader(bounds),
-            child: const Text(
-              '89%',
-              style: TextStyle(
-                fontSize: 64,
+            child: Text(
+              '$freshnessPercent%',
+              style: const TextStyle(
+                fontSize: 56,
                 fontWeight: FontWeight.w900,
                 color: Colors.white,
                 height: 1,
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
             decoration: BoxDecoration(
               gradient: AppTheme.primaryGradient,
               borderRadius: BorderRadius.circular(20),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.workspace_premium_rounded,
+                const Icon(Icons.workspace_premium_rounded,
                     color: Colors.white, size: 14),
-                SizedBox(width: 4),
+                const SizedBox(width: 4),
                 Text(
-                  'EXCELLENT',
-                  style: TextStyle(
+                  _gradeLabel,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,
                     fontSize: 11,
@@ -276,37 +293,26 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
   }
 
   Widget _buildStatGrid() {
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: 1.6,
+    return Row(
       children: [
-        _buildSmallStat(
-          'Time Saved',
-          '22 min',
-          Icons.access_time_rounded,
-          AppTheme.infoBlue,
+        Expanded(
+          child: Column(
+            children: [
+              _buildSmallStat('Produce', widget.produce, Icons.eco_rounded, AppTheme.forestGreen),
+              const SizedBox(height: 10),
+              _buildSmallStat('Quality', _gradeLabel == 'EXCELLENT' ? 'Tier 1' : 'Tier 2', Icons.workspace_premium_rounded, AppTheme.forestGreen),
+            ],
+          ),
         ),
-        _buildSmallStat(
-          'Revenue Boost',
-          '₹1,240',
-          Icons.trending_up_rounded,
-          AppTheme.sunsetOrange,
-        ),
-        _buildSmallStat(
-          'Quality Index',
-          'Tier 1',
-          Icons.workspace_premium_rounded,
-          AppTheme.forestGreen,
-        ),
-        _buildSmallStat(
-          'Distance',
-          '142 km',
-          Icons.route_rounded,
-          AppTheme.textSecondary,
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            children: [
+              _buildSmallStat('Revenue', '₹1,240', Icons.trending_up_rounded, AppTheme.sunsetOrange),
+              const SizedBox(height: 10),
+              _buildSmallStat('AI Route', 'Yes ✓', Icons.route_rounded, AppTheme.infoBlue),
+            ],
+          ),
         ),
       ],
     ).animate().fadeIn(delay: 600.ms);
@@ -315,32 +321,32 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
   Widget _buildSmallStat(
       String label, String value, IconData icon, Color color) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: color.withValues(alpha: 0.1),
-        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(height: 8),
+          Icon(icon, size: 16, color: color),
+          const SizedBox(height: 6),
           Text(
             value,
             style: TextStyle(
               fontWeight: FontWeight.w800,
-              fontSize: 18,
+              fontSize: 16,
               color: color,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           Text(
             label,
             style: const TextStyle(
-              fontSize: 11,
+              fontSize: 10,
               color: AppTheme.textSecondary,
             ),
           ),
@@ -352,7 +358,7 @@ class _TripSummaryScreenState extends State<TripSummaryScreen>
 
 class _CelebrationPainter extends CustomPainter {
   final double progress;
-  final Random _random = Random(42); // Fixed seed for consistent particles
+  final Random _random = Random(42);
 
   _CelebrationPainter({required this.progress});
 

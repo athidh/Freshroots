@@ -1,0 +1,41 @@
+﻿Analyzing frontend...                                           
+
+warning - Unused import: 'package:flutter_animate/flutter_animate.dart' - lib\features\dashboard\command_center_screen.dart:5:8 - unused_import
+warning - The value of the field '_temperature' isn't used - lib\features\dashboard\command_center_screen.dart:31:10 - unused_field
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\command_center_screen.dart:204:20 - curly_braces_in_flow_control_structures
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\command_center_screen.dart:214:24 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\command_center_screen.dart:214:28 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\command_center_screen.dart:223:42 - unnecessary_underscores
+   info - Angle brackets will be interpreted as HTML - lib\features\dashboard\in_transit_screen.dart:16:17 - unintended_html_in_doc_comment
+warning - The value of the field '_mapReady' isn't used - lib\features\dashboard\in_transit_screen.dart:86:8 - unused_field
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:233:34 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:234:39 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:235:39 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:236:12 - curly_braces_in_flow_control_structures
+   info - 'zIndex' is deprecated and shouldn't be used. Use zIndexInt instead. On some platforms zIndex is truncated to an int, which can lead to incorrect/unstable ordering - lib\features\dashboard\in_transit_screen.dart:333:7 - deprecated_member_use
+   info - Statements in an if should be enclosed in a block - lib\features\dashboard\in_transit_screen.dart:367:20 - curly_braces_in_flow_control_structures
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\in_transit_screen.dart:552:38 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\in_transit_screen.dart:552:42 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\features\dashboard\in_transit_screen.dart:554:48 - unnecessary_underscores
+   info - The imported package 'google_maps_flutter_android' isn't a dependency of the importing package - lib\main.dart:3:8 - depend_on_referenced_packages
+   info - The imported package 'google_maps_flutter_platform_interface' isn't a dependency of the importing package - lib\main.dart:4:8 - depend_on_referenced_packages
+
+flutter : 19 issues 
+found. (ran in 14.1s)
+At line:1 char:1
++ flutter analyze 
+--no-pub 2>&1 | 
+Out-File -Encoding 
+utf8 d:\freshroute ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (19 issues fou   
+ nd. (ran in 14.1s)    
+:String) [], Remot    
+eException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/services/auth_provider.dart';
 import '../dashboard/command_center_screen.dart';
 
 class LoadingTripScreen extends StatefulWidget {
   final String produce;
-  const LoadingTripScreen({super.key, required this.produce});
+  final String? tripId;
+  const LoadingTripScreen({super.key, required this.produce, this.tripId});
 
   @override
   State<LoadingTripScreen> createState() => _LoadingTripScreenState();
@@ -39,6 +42,16 @@ class _LoadingTripScreenState extends State<LoadingTripScreen>
   }
 
   void _startLoading() async {
+    // If we have a tripId, verify the trip exists on the backend
+    if (widget.tripId != null) {
+      try {
+        final auth = context.read<AuthProvider>();
+        await auth.api.getTripStatus(widget.tripId!);
+      } catch (_) {
+        // Trip verification failed — continue anyway for demo
+      }
+    }
+
     for (int i = 0; i < _steps.length; i++) {
       await Future.delayed(const Duration(milliseconds: 1400));
       if (mounted) setState(() => _step = i + 1);
@@ -49,7 +62,7 @@ class _LoadingTripScreenState extends State<LoadingTripScreen>
         context,
         PageRouteBuilder(
           pageBuilder: (context, a1, a2) =>
-              CommandCenterScreen(produce: widget.produce),
+              CommandCenterScreen(produce: widget.produce, tripId: widget.tripId),
           transitionsBuilder: (context, animation, a2, child) {
             return FadeTransition(opacity: animation, child: child);
           },

@@ -1,0 +1,7 @@
+﻿Analyzing lib...
+
+warning - features\dashboard\command_center_screen.dart:28:24 - The value of the field '_mapController' isn't used. Try removing the field, or using it. - unused_field
+warning - features\dashboard\in_transit_screen.dart:30:24 - The value of the field '_mapController' isn't used. Try removing the field, or using it. - unused_field
+   info - features\dashboard\command_center_screen.dart:34:10 - The private field _destination could be 'final'. Try making the field 'final'. - prefer_final_fields
+
+3 issues found.

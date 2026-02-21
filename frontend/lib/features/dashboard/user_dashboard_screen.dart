@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/shimmer_loading.dart';
+import '../../core/services/auth_provider.dart';
+import '../../core/services/api_service.dart';
 import '../trip/loading_trip_screen.dart';
 
 class UserDashboardScreen extends StatefulWidget {
@@ -15,34 +18,70 @@ class UserDashboardScreen extends StatefulWidget {
 class _UserDashboardScreenState extends State<UserDashboardScreen> {
   String? selectedProduce;
   bool _isLoading = true;
+  bool _isStarting = false;
   int _selectedCategoryIndex = 0;
 
   final List<String> categories = [
     '🍎 Fruits',
     '🥬 Vegetables',
-    '🌾 Grains',
-    '🥛 Dairy',
-    '🌿 Herbs',
   ];
 
-  final List<Map<String, dynamic>> products = [
-    {'name': 'Strawberries', 'icon': '🍓', 'price': '₹120/kg', 'freshness': 0.96},
-    {'name': 'Carrots', 'icon': '🥕', 'price': '₹40/kg', 'freshness': 0.92},
-    {'name': 'Tomatoes', 'icon': '🍅', 'price': '₹35/kg', 'freshness': 0.88},
-    {'name': 'Leafy Greens', 'icon': '🥬', 'price': '₹60/kg', 'freshness': 0.78},
-    {'name': 'Apples', 'icon': '🍎', 'price': '₹150/kg', 'freshness': 0.94},
-    {'name': 'Grapes', 'icon': '🍇', 'price': '₹80/kg', 'freshness': 0.85},
-  ];
+  List<Map<String, dynamic>> products = [];
+  int _activeTrips = 0;
 
   final TextEditingController _quantityController = TextEditingController();
+
+  // Emoji map for produce names
+  static const _produceEmoji = {
+    'Apple': '🍎', 'Banana': '🍌', 'Strawberry': '🍓',
+    'Mango': '🥭', 'Grapes': '🍇', 'Spinach': '🥬',
+    'Tomato': '🍅', 'Broccoli': '🥦', 'Carrot': '🥕', 'Potato': '🥔',
+  };
 
   @override
   void initState() {
     super.initState();
-    // Simulate loading delay for shimmer demo
-    Future.delayed(const Duration(milliseconds: 1500), () {
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final auth = context.read<AuthProvider>();
+    try {
+      // Load produce list from backend
+      final produceData = await auth.api.getProduceList();
+      final fruits = (produceData['fruits'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final vegs = (produceData['vegetables'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final allProduce = [...fruits, ...vegs];
+
+      // Load user trips for stats
+      int trips = 0;
+      if (auth.isLoggedIn) {
+        try {
+          final tripData = await auth.api.getUserTrips();
+          final tripList = tripData['trips'] as List? ?? [];
+          trips = tripList.where((t) => t['status'] == 'IN_TRANSIT').length;
+        } catch (_) {}
+      }
+
+      if (mounted) {
+        setState(() {
+          products = allProduce.map((p) {
+            final name = p['name'] as String;
+            return {
+              'name': name,
+              'icon': _produceEmoji[name] ?? '🌿',
+              'decay': p['decay_constant'],
+              'category': fruits.contains(p) ? 0 : 1,
+            };
+          }).toList();
+          _activeTrips = trips;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      // Fallback if server unreachable
       if (mounted) setState(() => _isLoading = false);
-    });
+    }
   }
 
   @override
@@ -55,6 +94,11 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
   Widget build(BuildContext context) {
     final String currentTime = DateFormat('HH:mm, MMM d').format(DateTime.now());
     final String greeting = _getGreeting();
+    final auth = context.watch<AuthProvider>();
+    final username = auth.isLoggedIn ? auth.username : 'Farmer';
+    final filteredProducts = products
+        .where((p) => p['category'] == _selectedCategoryIndex)
+        .toList();
 
     return Scaffold(
       body: CustomScrollView(
@@ -62,7 +106,7 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
           parent: AlwaysScrollableScrollPhysics(),
         ),
         slivers: [
-          _buildPremiumAppBar(greeting),
+          _buildPremiumAppBar(greeting, username),
           SliverToBoxAdapter(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -105,7 +149,7 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                _buildProductGrid(),
+                _buildProductGrid(filteredProducts),
                 const SizedBox(height: 32),
 
                 // New Load Entry Section
@@ -198,7 +242,7 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
     return 'Good Evening';
   }
 
-  Widget _buildPremiumAppBar(String greeting) {
+  Widget _buildPremiumAppBar(String greeting, String username) {
     return SliverAppBar(
       expandedHeight: 180,
       floating: false,
@@ -239,15 +283,15 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
                     Text(
                       greeting,
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
+                        color: Colors.white,
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
-                      'Farmer Dashboard',
-                      style: TextStyle(
+                    Text(
+                      'Hi, $username 👋',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 26,
                         fontWeight: FontWeight.w800,
@@ -302,7 +346,7 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
             child: _buildStatChip(
               Icons.local_shipping_rounded,
               'Active Trips',
-              '3',
+              '$_activeTrips',
               AppTheme.forestGreen,
             ),
           ),
@@ -403,14 +447,14 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
     );
   }
 
-  Widget _buildProductGrid() {
+  Widget _buildProductGrid(List<Map<String, dynamic>> filteredProducts) {
     return SizedBox(
       height: 180,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: products.length,
+        itemCount: filteredProducts.length,
         itemBuilder: (context, index) {
           if (_isLoading) {
             return const Padding(
@@ -418,7 +462,7 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
               child: ShimmerProductCard(),
             );
           }
-          final product = products[index];
+          final product = filteredProducts[index];
           final isSelected = selectedProduce == product['name'];
           return Padding(
             padding: const EdgeInsets.only(right: 12),
@@ -480,36 +524,13 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Text(
-                          product['price'] as String,
-                          style: TextStyle(
-                            color: AppTheme.sunsetOrange,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
-                          ),
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppTheme.successGreen.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            '${((product['freshness'] as double) * 100).toInt()}%',
-                            style: TextStyle(
-                              color: AppTheme.successGreen,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
+                    Text(
+                      'Decay: ${product['decay']}',
+                      style: TextStyle(
+                        color: AppTheme.sunsetOrange,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 11,
+                      ),
                     ),
                   ],
                 ),
@@ -743,7 +764,7 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
   }
 
   Widget _buildStartButton() {
-    final bool isReady = selectedProduce != null;
+    final bool isReady = selectedProduce != null && !_isStarting;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       width: double.infinity,
@@ -765,14 +786,63 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
       child: ElevatedButton(
         onPressed: !isReady
             ? null
-            : () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        LoadingTripScreen(produce: selectedProduce!),
-                  ),
-                );
+            : () async {
+                final auth = context.read<AuthProvider>();
+                final quantity = double.tryParse(_quantityController.text) ?? 10;
+
+                if (auth.isLoggedIn) {
+                  setState(() => _isStarting = true);
+                  try {
+                    final result = await auth.api.startTrip(
+                      selectedProduce!,
+                      quantity,
+                      'GPS Location',
+                    );
+                    final tripId = result['tripId'] as String;
+                    if (mounted) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => LoadingTripScreen(
+                            produce: selectedProduce!,
+                            tripId: tripId,
+                          ),
+                        ),
+                      );
+                    }
+                  } on ApiException catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(e.message),
+                          backgroundColor: AppTheme.errorRed,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Failed to start trip. Check server.'),
+                          backgroundColor: AppTheme.errorRed,
+                        ),
+                      );
+                    }
+                  } finally {
+                    if (mounted) setState(() => _isStarting = false);
+                  }
+                } else {
+                  // Guest mode — skip API call
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => LoadingTripScreen(
+                        produce: selectedProduce!,
+                        tripId: null,
+                      ),
+                    ),
+                  );
+                }
               },
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
@@ -782,26 +852,35 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
             borderRadius: BorderRadius.circular(18),
           ),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.play_circle_filled_rounded,
-              color: isReady ? Colors.white : Colors.grey,
-              size: 24,
-            ),
-            const SizedBox(width: 10),
-            Text(
-              'START NEW TRIP',
-              style: TextStyle(
-                color: isReady ? Colors.white : Colors.grey,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1,
-                fontSize: 15,
+        child: _isStarting
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2.5,
+                ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.play_circle_filled_rounded,
+                    color: isReady ? Colors.white : Colors.grey,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'START NEW TRIP',
+                    style: TextStyle(
+                      color: isReady ? Colors.white : Colors.grey,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1,
+                      fontSize: 15,
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }

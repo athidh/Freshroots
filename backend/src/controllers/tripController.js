@@ -85,3 +85,13 @@ exports.getTripStatus = async (req, res) => {
         res.status(500).json({ error: "Failed to fetch status", details: err.message });
     }
 };
+
+// 3. GET USER TRIPS (List all trips for the logged-in user)
+exports.getUserTrips = async (req, res) => {
+    try {
+        const trips = await Trip.find({ user_id: req.user.id }).sort({ created_at: -1 });
+        res.json({ trips });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch user trips", details: err.message });
+    }
+};

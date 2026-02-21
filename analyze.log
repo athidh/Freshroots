@@ -1,0 +1,11 @@
+﻿Analyzing lib...
+
+  error - features\dashboard\user_dashboard_screen.dart:284:23 - Arguments of a constant creation must be constant expressions. Try making the argument a valid constant, or use 'new' to call the constructor. - const_with_non_constant_argument
+  error - features\dashboard\user_dashboard_screen.dart:293:29 - Undefined name 'username'. Try correcting the name to one that is defined, or defining the name. - undefined_identifier
+  error - features\dashboard\user_dashboard_screen.dart:457:20 - Undefined name 'filteredProducts'. Try correcting the name to one that is defined, or defining the name. - undefined_identifier
+  error - features\dashboard\user_dashboard_screen.dart:465:27 - Undefined name 'filteredProducts'. Try correcting the name to one that is defined, or defining the name. - undefined_identifier
+warning - features\dashboard\user_dashboard_screen.dart:98:11 - The value of the local variable 'username' isn't used. Try removing the variable or using it. - unused_local_variable
+warning - features\dashboard\user_dashboard_screen.dart:99:11 - The value of the local variable 'filteredProducts' isn't used. Try removing the variable or using it. - unused_local_variable
+   info - features\dashboard\user_dashboard_screen.dart:624:7 - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+
+7 issues found.

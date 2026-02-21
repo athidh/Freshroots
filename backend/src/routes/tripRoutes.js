@@ -9,4 +9,7 @@ router.post('/start', protect, tripController.startTrip);
 // This route is also protected.
 router.get('/status/:id', protect, tripController.getTripStatus);
 
+// Get all trips for the logged-in user
+router.get('/user', protect, tripController.getUserTrips);
+
 module.exports = router;

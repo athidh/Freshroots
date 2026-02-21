@@ -1,14 +1,75 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:provider/provider.dart';
-import 'package:flutter_animate/flutter_animate.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:http/http.dart' as http;
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/app_settings.dart';
-import '../../core/overlays/weather_overlay.dart';
+import '../../core/services/auth_provider.dart';
 import '../profile/trip_summary_screen.dart';
+
+// ── Top-level functions for Isolate via compute() ──────────────────────
+
+/// Decodes a Google-encoded polyline string in a background isolate.
+/// Returns List<List<double>> because LatLng can't cross isolate boundaries.
+List<List<double>> decodePolylineIsolate(String encoded) {
+  List<List<double>> points = [];
+  int index = 0, lat = 0, lng = 0;
+  while (index < encoded.length) {
+    int shift = 0, result = 0, b;
+    do {
+      b = encoded.codeUnitAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    lat += (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+    shift = 0;
+    result = 0;
+    do {
+      b = encoded.codeUnitAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    lng += (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+    points.add([lat / 1e5, lng / 1e5]);
+  }
+  return points;
+}
+
+/// Computes the bounding box of a list of points in a background isolate.
+/// Returns [south, west, north, east].
+List<double> computeBoundsIsolate(List<List<double>> pts) {
+  double s = pts.first[0], n = s, w = pts.first[1], e = w;
+  for (final p in pts) {
+    if (p[0] < s) s = p[0];
+    if (p[0] > n) n = p[0];
+    if (p[1] < w) w = p[1];
+    if (p[1] > e) e = p[1];
+  }
+  return [s, w, n, e];
+}
 
 class InTransitScreen extends StatefulWidget {
   final String produce;
-  const InTransitScreen({super.key, required this.produce});
+  final String? tripId;
+  final double originLat;
+  final double originLng;
+  final double destLat;
+  final double destLng;
+  final String destName;
+
+  const InTransitScreen({
+    super.key,
+    required this.produce,
+    this.tripId,
+    this.originLat = 13.0827,
+    this.originLng = 80.2707,
+    this.destLat = 13.0694,
+    this.destLng = 80.1948,
+    this.destName = 'Koyambedu Market',
+  });
 
   @override
   State<InTransitScreen> createState() => _InTransitScreenState();
@@ -16,51 +77,305 @@ class InTransitScreen extends StatefulWidget {
 
 class _InTransitScreenState extends State<InTransitScreen>
     with TickerProviderStateMixin {
+  // Use Completer for safe async map access
+  final Completer<GoogleMapController> _mapCompleter = Completer<GoogleMapController>();
+  final Set<Marker> _markers = {};
+  Set<Polyline> _polylines = {};
+  List<LatLng> _routePoints = [];
   bool _showWarning = false;
+  bool _mapReady = false;
   double _freshness = 0.94;
-  Color _routeColor = AppTheme.forestGreen;
-  bool _isRoutePulsing = false;
+  String _temperature = '28°C';
+  String _spoilageRisk = 'Low';
+  String _eta = 'Calculating...';
+  String _distanceLeft = '...';
+  Timer? _pollTimer;
   double _truckProgress = 0.0;
   late AnimationController _truckController;
-  bool _showProfitSheet = false;
+
+  // Speed control
+  int _speedMultiplier = 1;
+  static const _baseDuration = 300; // 5 minutes
+
+  // Custom icons
+  BitmapDescriptor? _truckIcon;
+  BitmapDescriptor? _marketIcon;
+
+  // Weather
+  String _originWeather = '';
+  String _destWeather = '';
+
+  // ── Performance: Camera debounce & drag detection ──────────────────
+  Timer? _cameraDebounce;
+  DateTime _lastCameraUpdate = DateTime(2000);
+  bool _userDragging = false;
 
   @override
   void initState() {
     super.initState();
     _truckController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 30),
-    )..forward();
-    _truckController.addListener(() {
-      if (mounted) {
+      duration: Duration(seconds: _baseDuration),
+    );
+    _truckController.addListener(_onTruckUpdate);
+
+    // Defer all heavy work to after first frame renders
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeAsync();
+    });
+  }
+
+  /// All async initialization — called after first frame
+  Future<void> _initializeAsync() async {
+    // Create marker icons
+    await _createCustomMarkers();
+
+    // Setup endpoint markers
+    _setupEndpoints();
+
+    // Start parallel async work
+    _fetchDirections();
+    _fetchWeather();
+
+    // Trip status polling
+    if (widget.tripId != null) {
+      _fetchTripStatus();
+      _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _fetchTripStatus());
+    } else {
+      _simulateJourney();
+    }
+  }
+
+  @override
+  void dispose() {
+    _truckController.removeListener(_onTruckUpdate);
+    _truckController.dispose();
+    _pollTimer?.cancel();
+    _cameraDebounce?.cancel();
+    // Properly dispose map controller
+    _mapCompleter.future.then((c) => c.dispose());
+    super.dispose();
+  }
+
+  void _onTruckUpdate() {
+    if (!mounted) return;
+    _truckProgress = _truckController.value;
+    _updateTruckPosition();
+  }
+
+  Future<void> _createCustomMarkers() async {
+    _truckIcon = await _createIcon('🚛', Colors.blue.shade700);
+    _marketIcon = await _createIcon('🏪', Colors.green.shade700);
+    if (mounted) setState(() {});
+  }
+
+  Future<BitmapDescriptor> _createIcon(String emoji, Color bgColor) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    const size = 100.0;
+    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2, Paint()..color = bgColor);
+    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2 - 2,
+        Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 4);
+    final tp = TextPainter(
+      text: TextSpan(text: emoji, style: const TextStyle(fontSize: 48)),
+      textDirection: TextDirection.ltr,
+    );
+    tp.layout();
+    tp.paint(canvas, Offset((size - tp.width) / 2, (size - tp.height) / 2));
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(size.toInt(), size.toInt());
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), width: 48, height: 48);
+  }
+
+  Future<void> _fetchWeather() async {
+    try {
+      final oRes = await http.get(Uri.parse(
+          'http://10.0.2.127:5000/api/weather?lat=${widget.originLat}&lon=${widget.originLng}'))
+          .timeout(const Duration(seconds: 5));
+      if (oRes.statusCode == 200 && mounted) {
+        final d = json.decode(oRes.body);
+        setState(() => _originWeather = '${d['temp']} ${d['description']}');
+      }
+    } catch (_) {}
+    try {
+      final dRes = await http.get(Uri.parse(
+          'http://10.0.2.127:5000/api/weather?lat=${widget.destLat}&lon=${widget.destLng}'))
+          .timeout(const Duration(seconds: 5));
+      if (dRes.statusCode == 200 && mounted) {
+        final d = json.decode(dRes.body);
         setState(() {
-          _truckProgress = _truckController.value;
+          _destWeather = '${d['temp']} ${d['description']}';
+          _temperature = d['temp'] as String;
         });
       }
+    } catch (_) {}
+  }
+
+  void _setupEndpoints() {
+    _markers.add(Marker(
+      markerId: const MarkerId('origin'),
+      position: LatLng(widget.originLat, widget.originLng),
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+      infoWindow: const InfoWindow(title: '🚛 Start Point'),
+    ));
+    _markers.add(Marker(
+      markerId: const MarkerId('destination'),
+      position: LatLng(widget.destLat, widget.destLng),
+      icon: _marketIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+      infoWindow: InfoWindow(title: '🏪 ${widget.destName}'),
+    ));
+    if (mounted) setState(() {});
+  }
+
+  void _cycleSpeed() {
+    setState(() {
+      if (_speedMultiplier == 1) _speedMultiplier = 2;
+      else if (_speedMultiplier == 2) _speedMultiplier = 5;
+      else if (_speedMultiplier == 5) _speedMultiplier = 10;
+      else _speedMultiplier = 1;
     });
-    _simulateJourney();
+    final currentProgress = _truckController.value;
+    _truckController.stop();
+    final remainingFraction = 1.0 - currentProgress;
+    final remainingSeconds = (_baseDuration * remainingFraction / _speedMultiplier).toInt().clamp(1, _baseDuration);
+    _truckController.duration = Duration(seconds: remainingSeconds);
+    _truckController.forward(from: currentProgress);
+  }
+
+  Future<void> _fetchDirections() async {
+    try {
+      final url = 'https://maps.googleapis.com/maps/api/directions/json'
+          '?origin=${widget.originLat},${widget.originLng}'
+          '&destination=${widget.destLat},${widget.destLng}'
+          '&key=AIzaSyCZb9hp1XXwVnFm_cWBpHpQzw4J-FQUcOE&mode=driving&traffic_model=best_guess&departure_time=now';
+      final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body);
+        if ((data['routes'] as List).isNotEmpty) {
+          final route = data['routes'][0];
+          final encoded = route['overview_polyline']['points'] as String;
+
+          // Decode polyline in a background isolate via compute()
+          final rawPoints = await compute(decodePolylineIsolate, encoded);
+          final decodedPoints = rawPoints.map((p) => LatLng(p[0], p[1])).toList();
+
+          final leg = route['legs'][0];
+
+          // Build polyline fully before updating state (optimization)
+          final newPolyline = Polyline(
+            polylineId: const PolylineId('route'),
+            points: decodedPoints,
+            color: AppTheme.forestGreen,
+            width: 5,
+          );
+
+          if (mounted) {
+            setState(() {
+              _routePoints = decodedPoints;
+              _eta = leg['duration']['text'] as String;
+              _distanceLeft = leg['distance']['text'] as String;
+              _polylines = {newPolyline};
+            });
+            // Animate camera after state is set
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              if (_mapCompleter.isCompleted && _routePoints.isNotEmpty) {
+                final controller = await _mapCompleter.future;
+                // Compute bounds in background isolate
+                final rawBounds = await compute(
+                  computeBoundsIsolate,
+                  _routePoints.map((p) => [p.latitude, p.longitude]).toList(),
+                );
+                final bounds = LatLngBounds(
+                  southwest: LatLng(rawBounds[0], rawBounds[1]),
+                  northeast: LatLng(rawBounds[2], rawBounds[3]),
+                );
+                controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+              }
+              _truckController.forward();
+            });
+          }
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // Fallback
+    final fallbackPoints = [LatLng(widget.originLat, widget.originLng), LatLng(widget.destLat, widget.destLng)];
+    final fallbackPolyline = Polyline(polylineId: const PolylineId('route'), points: fallbackPoints, color: AppTheme.forestGreen, width: 5);
+    if (mounted) {
+      setState(() {
+        _routePoints = fallbackPoints;
+        _eta = '~30 min';
+        _distanceLeft = '~20 km';
+        _polylines = {fallbackPolyline};
+      });
+      _truckController.forward();
+    }
+  }
+
+  void _updateTruckPosition() {
+    if (_routePoints.isEmpty || !mounted) return;
+    final total = _routePoints.length;
+    final exact = _truckProgress * (total - 1);
+    final idx = exact.floor().clamp(0, total - 2);
+    final t = exact - idx;
+    final lat = _routePoints[idx].latitude + (_routePoints[idx + 1].latitude - _routePoints[idx].latitude) * t;
+    final lng = _routePoints[idx].longitude + (_routePoints[idx + 1].longitude - _routePoints[idx].longitude) * t;
+    final truckPos = LatLng(lat, lng);
+
+    _markers.removeWhere((m) => m.markerId.value == 'truck');
+    _markers.add(Marker(
+      markerId: const MarkerId('truck'),
+      position: truckPos,
+      icon: _truckIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      infoWindow: InfoWindow(title: '🚛 ${widget.produce}', snippet: '${(_freshness * 100).toInt()}% fresh • ${_speedMultiplier}x'),
+      zIndex: 10,
+    ));
+    setState(() {});
+
+    // ── Throttled camera follow (3-second debounce) ──────────────────
+    // Skip auto-follow entirely if the user is manually dragging the map.
+    if (_userDragging || !_mapCompleter.isCompleted) return;
+    final now = DateTime.now();
+    if (now.difference(_lastCameraUpdate).inSeconds >= 3) {
+      _lastCameraUpdate = now;
+      _mapCompleter.future.then((c) => c.animateCamera(CameraUpdate.newLatLng(truckPos)));
+    }
+  }
+
+  /// Re-center the camera on the truck and resume auto-follow.
+  void _recenterOnTruck() {
+    setState(() => _userDragging = false);
+    if (_routePoints.isEmpty || !_mapCompleter.isCompleted) return;
+    final total = _routePoints.length;
+    final exact = _truckProgress * (total - 1);
+    final idx = exact.floor().clamp(0, total - 2);
+    final t = exact - idx;
+    final lat = _routePoints[idx].latitude + (_routePoints[idx + 1].latitude - _routePoints[idx].latitude) * t;
+    final lng = _routePoints[idx].longitude + (_routePoints[idx + 1].longitude - _routePoints[idx].longitude) * t;
+    _lastCameraUpdate = DateTime.now();
+    _mapCompleter.future.then((c) => c.animateCamera(CameraUpdate.newLatLng(LatLng(lat, lng))));
+  }
+
+  Future<void> _fetchTripStatus() async {
+    try {
+      final auth = context.read<AuthProvider>();
+      final st = await auth.api.getTripStatus(widget.tripId!);
+      final ls = st['live_status'] as Map<String, dynamic>? ?? {};
+      final f = (ls['freshness_percentage'] as String? ?? '94%').replaceAll('%', '');
+      if (mounted) setState(() {
+        _freshness = (double.tryParse(f) ?? 94) / 100;
+        _temperature = ls['ambient_temperature'] as String? ?? '28°C';
+        _spoilageRisk = ls['spoilage_risk'] as String? ?? 'Low';
+        if (_spoilageRisk.contains('High')) _showWarning = true;
+      });
+    } catch (_) {}
   }
 
   void _simulateJourney() async {
-    await Future.delayed(const Duration(seconds: 3));
-    if (mounted) {
-      context.read<AppSettings>().setWeather(WeatherState.rainy);
-    }
-
-    await Future.delayed(const Duration(seconds: 4));
-    if (mounted) {
-      setState(() {
-        _routeColor = AppTheme.errorRed;
-        _isRoutePulsing = true;
-        _showWarning = true;
-      });
-    }
-
-    await Future.delayed(const Duration(seconds: 5));
-    if (mounted) {
-      context.read<AppSettings>().setWeather(WeatherState.hot);
-    }
-
+    await Future.delayed(const Duration(seconds: 6));
+    if (mounted) setState(() { _spoilageRisk = 'Medium'; _showWarning = true; });
     for (int i = 0; i < 20; i++) {
       await Future.delayed(const Duration(seconds: 3));
       if (mounted) setState(() => _freshness -= 0.005);
@@ -68,721 +383,205 @@ class _InTransitScreenState extends State<InTransitScreen>
   }
 
   @override
-  void dispose() {
-    _truckController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
-
     return Scaffold(
-      body: Stack(
+      body: Column(
         children: [
-          // Map Layer
-          _buildMapLayer(settings),
-
-          // Weather Overlay
-          WeatherOverlay(state: settings.weatherState),
-
-          // Top bar
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  // Theme toggle
-                  _buildCircleButton(
-                    icon: settings.isDarkMode
-                        ? Icons.dark_mode_rounded
-                        : Icons.light_mode_rounded,
-                    color: settings.isDarkMode ? Colors.blue : AppTheme.sunsetOrange,
-                    onTap: () => settings.toggleTheme(),
-                    isDark: settings.isDarkMode,
+          // MAP — Expanded fills screen
+          Expanded(
+            child: Stack(
+              children: [
+                SizedBox.expand(
+                  child: GoogleMap(
+                    initialCameraPosition: CameraPosition(
+                      target: LatLng((widget.originLat + widget.destLat) / 2, (widget.originLng + widget.destLng) / 2),
+                      zoom: 12),
+                    mapType: MapType.normal,
+                    markers: _markers,
+                    polylines: _polylines,
+                    trafficEnabled: true,
+                    onMapCreated: (c) {
+                      if (!_mapCompleter.isCompleted) _mapCompleter.complete(c);
+                      setState(() => _mapReady = true);
+                    },
+                    // ── Drag detection: stop auto-follow when user pans ──
+                    onCameraMoveStarted: () {
+                      if (!_userDragging) setState(() => _userDragging = true);
+                    },
+                    myLocationEnabled: true,
+                    myLocationButtonEnabled: false,
+                    zoomControlsEnabled: false,
+                    compassEnabled: true,
+                    rotateGesturesEnabled: true,
+                    scrollGesturesEnabled: true,
+                    tiltGesturesEnabled: true,
+                    zoomGesturesEnabled: true,
+                    minMaxZoomPreference: MinMaxZoomPreference.unbounded,
                   ),
-                  const Spacer(),
-                  // Produce badge
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
+                ),
+
+                // Top bar
+                SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(children: [
+                      _pill(Icons.arrow_back_rounded, null, () => Navigator.pop(context)),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24),
+                          boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)]),
+                        child: Row(children: [
+                          Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle)),
+                          const SizedBox(width: 6),
+                          const Text('LIVE', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 11, color: Colors.red)),
+                          const SizedBox(width: 8),
+                          Text(widget.produce, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                          const SizedBox(width: 8),
+                          Text(_temperature, style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.sunsetOrange, fontSize: 11)),
+                        ]),
+                      ),
+                    ]),
+                  ),
+                ),
+
+                // Re-center button (visible when user is manually dragging)
+                if (_userDragging)
+                  Positioned(right: 16, bottom: 60, child: GestureDetector(
+                    onTap: _recenterOnTruck,
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.forestGreen,
+                        shape: BoxShape.circle,
+                        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)]),
+                      child: const Icon(Icons.my_location_rounded, size: 20, color: Colors.white),
+                    ),
+                  )),
+
+                // Speed button (floating bottom-right)
+                Positioned(right: 16, bottom: 16, child: GestureDetector(
+                  onTap: _cycleSpeed,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.5),
+                      color: _speedMultiplier > 1 ? AppTheme.sunsetOrange : Colors.white,
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.1),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: _freshness > 0.85
-                                ? AppTheme.successGreen
-                                : AppTheme.sunsetOrange,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
+                      boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)]),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.fast_forward_rounded, size: 18,
+                          color: _speedMultiplier > 1 ? Colors.white : Colors.black87),
+                      const SizedBox(width: 4),
+                      Text('${_speedMultiplier}x', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13,
+                          color: _speedMultiplier > 1 ? Colors.white : Colors.black87)),
+                    ]),
+                  ),
+                )),
+
+                // Warning
+                if (_showWarning)
+                  Positioned(top: MediaQuery.of(context).padding.top + 56, left: 16, right: 16,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(color: AppTheme.warningAmber, borderRadius: BorderRadius.circular(14)),
+                      child: Row(children: [
+                        const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
                         const SizedBox(width: 8),
-                        Text(
-                          widget.produce,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                        Expanded(child: Text('🌡️ $_temperature • Risk: ${_spoilageRisk.toUpperCase()}',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12))),
+                        GestureDetector(onTap: () => setState(() => _showWarning = false),
+                            child: const Icon(Icons.close, color: Colors.white70, size: 16)),
+                      ]),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  // Profit optimization toggle
-                  _buildCircleButton(
-                    icon: Icons.analytics_rounded,
-                    color: AppTheme.sunsetOrange,
-                    onTap: () =>
-                        setState(() => _showProfitSheet = !_showProfitSheet),
-                    isDark: true,
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Warning Banner
-          if (_showWarning)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 56,
-              left: 16,
-              right: 16,
-              child: _buildWarningBanner(),
-            ),
-
-          // Stats Panel (Bottom)
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: _buildStatsPanel(context, settings),
-          ),
-
-          // Profit Optimization Sheet
-          if (_showProfitSheet)
-            Positioned(
-              right: 16,
-              top: MediaQuery.of(context).padding.top + 56,
-              child: _buildProfitSheet(),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCircleButton({
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-    required bool isDark,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: isDark
-              ? Colors.black.withValues(alpha: 0.5)
-              : Colors.white.withValues(alpha: 0.9),
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.1),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.2),
-              blurRadius: 8,
-            ),
-          ],
-        ),
-        child: Icon(icon, color: color, size: 20)
-            .animate(key: ValueKey(icon))
-            .rotate(begin: -0.5, end: 0, duration: 400.ms),
-      ),
-    );
-  }
-
-  Widget _buildMapLayer(AppSettings settings) {
-    return Container(
-      color: settings.isDarkMode
-          ? const Color(0xFF0A0F0A)
-          : const Color(0xFFE8EDE8),
-      child: CustomPaint(
-        size: Size.infinite,
-        painter: _PremiumPathPainter(
-          routeColor: _routeColor,
-          isPulsing: _isRoutePulsing,
-          truckProgress: _truckProgress,
-          isDark: settings.isDarkMode,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildWarningBanner() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppTheme.errorRed,
-            AppTheme.errorRed.withValues(alpha: 0.9),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.errorRed.withValues(alpha: 0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 20)
-              .animate(onPlay: (c) => c.repeat())
-              .shake(duration: 600.ms),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Text(
-              'SPOILAGE RISK HIGH — Rerouting Suggested',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
-          ),
-          GestureDetector(
-            onTap: () => setState(() => _showWarning = false),
-            child: const Icon(Icons.close_rounded,
-                color: Colors.white70, size: 18),
-          ),
-        ],
-      ),
-    ).animate().slideY(begin: -1, end: 0, duration: 400.ms);
-  }
-
-  Widget _buildProfitSheet() {
-    return Container(
-      width: 260,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.85),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.1),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 20,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.analytics_rounded,
-                  color: AppTheme.sunsetOrange, size: 16),
-              SizedBox(width: 8),
-              Text(
-                'Profit Optimizer',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _buildProfitRow('Current Route', '₹38/kg', false),
-          _buildProfitRow('Alt Route A', '₹42/kg', true),
-          _buildProfitRow('Alt Route B', '₹40/kg', false),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppTheme.forestGreen.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.lightbulb_rounded,
-                    color: AppTheme.sunsetOrange, size: 14),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Switch to Alt A for +₹400 revenue',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
-        ],
-      ),
-    ).animate().fadeIn().scale(
-          begin: const Offset(0.9, 0.9),
-          end: const Offset(1, 1),
-          duration: 300.ms,
-        );
-  }
 
-  Widget _buildProfitRow(String route, String price, bool isBest) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            route,
-            style: TextStyle(
-              color: isBest ? AppTheme.sunsetOrangeLight : Colors.white54,
-              fontSize: 12,
-              fontWeight: isBest ? FontWeight.w700 : FontWeight.w500,
-            ),
-          ),
-          Row(
-            children: [
-              Text(
-                price,
-                style: TextStyle(
-                  color: isBest ? AppTheme.sunsetOrangeLight : Colors.white70,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              if (isBest) ...[
-                const SizedBox(width: 4),
-                const Icon(Icons.arrow_upward_rounded,
-                    color: AppTheme.successGreen, size: 12),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatsPanel(BuildContext context, AppSettings settings) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(28),
-          topRight: Radius.circular(28),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 20,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Drag handle
+          // BOTTOM PANEL
           Container(
-            width: 36,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade300,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildGlanceStat(
-                  'ETA',
-                  '14:42',
-                  Icons.access_time_rounded,
-                  AppTheme.infoBlue,
-                ),
-              ),
-              Container(
-                width: 1,
-                height: 40,
-                color: Colors.grey.withValues(alpha: 0.15),
-              ),
-              Expanded(
-                child: _buildGlanceStat(
-                  'FRESHNESS',
-                  '${(_freshness * 100).toInt()}%',
-                  Icons.eco_rounded,
-                  _freshness > 0.85
-                      ? AppTheme.forestGreen
-                      : _freshness > 0.6
-                          ? AppTheme.sunsetOrange
-                          : AppTheme.errorRed,
-                ),
-              ),
-              Container(
-                width: 1,
-                height: 40,
-                color: Colors.grey.withValues(alpha: 0.15),
-              ),
-              Expanded(
-                child: _buildGlanceStat(
-                  'DISTANCE',
-                  '87 km',
-                  Icons.straighten_rounded,
-                  AppTheme.textSecondary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (_showWarning) ...[
-            _buildRerouteAction(),
-            const SizedBox(height: 12),
-          ],
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  height: 52,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: AppTheme.errorRed.withValues(alpha: 0.3),
-                    ),
-                  ),
-                  child: OutlinedButton(
-                    onPressed: () {},
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.errorRed,
-                      side: BorderSide.none,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.emergency_rounded, size: 16),
-                        SizedBox(width: 6),
-                        Text(
-                          'SOS',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: Container(
-                  height: 52,
-                  decoration: BoxDecoration(
-                    gradient: AppTheme.primaryGradient,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.forestGreen.withValues(alpha: 0.25),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const TripSummaryScreen(),
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      shadowColor: Colors.transparent,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.check_circle_rounded, size: 18),
-                        SizedBox(width: 6),
-                        Text(
-                          'ARRIVED',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.5,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGlanceStat(
-    String label,
-    String value,
-    IconData icon,
-    Color color,
-  ) {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                color: AppTheme.textSecondary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            color: color,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRerouteAction() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppTheme.infoBlue.withValues(alpha: 0.08),
-            AppTheme.infoBlue.withValues(alpha: 0.03),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.infoBlue.withValues(alpha: 0.15),
-        ),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.alt_route_rounded,
-              color: AppTheme.infoBlue, size: 20),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Alternative Route Available',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                ),
-                Text(
-                  '+₹400 Value • Saves 8% freshness',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppTheme.textSecondary,
-                  ),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            decoration: const BoxDecoration(color: Colors.white,
+              boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, -2))]),
+            child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Row(children: [
+                Container(padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: AppTheme.forestGreen.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.local_shipping_rounded, color: AppTheme.forestGreen, size: 20)),
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(widget.destName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text('ETA: $_eta • $_distanceLeft', style: const TextStyle(fontSize: 12, color: AppTheme.forestGreen, fontWeight: FontWeight.w600)),
+                ])),
+              ]),
+              if (_destWeather.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: AppTheme.infoBlue.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(8)),
+                  child: Row(children: [
+                    const Icon(Icons.cloud, color: AppTheme.infoBlue, size: 14),
+                    const SizedBox(width: 6),
+                    if (_originWeather.isNotEmpty) Text('Start: $_originWeather', style: const TextStyle(fontSize: 10, color: AppTheme.infoBlue)),
+                    if (_originWeather.isNotEmpty) const Text(' → ', style: TextStyle(fontSize: 10, color: AppTheme.infoBlue)),
+                    Expanded(child: Text('Dest: $_destWeather', style: const TextStyle(fontSize: 10, color: AppTheme.infoBlue, fontWeight: FontWeight.w600),
+                        maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  ]),
                 ),
               ],
-            ),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: AppTheme.infoBlue,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: () => setState(() {
-                  _showWarning = false;
-                  _isRoutePulsing = false;
-                  _routeColor = AppTheme.forestGreen;
-                }),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  child: Text(
-                    'ACCEPT',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+              const SizedBox(height: 6),
+              Row(children: [
+                Expanded(child: _stat('🌡️', _temperature)),
+                const SizedBox(width: 8),
+                Expanded(child: _stat('🥬', '${(_freshness * 100).toInt()}%')),
+                const SizedBox(width: 8),
+                Expanded(child: _stat(_spoilageRisk == 'Low' ? '🟢' : '🟡', _spoilageRisk.toUpperCase())),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(child: SizedBox(height: 44, child: OutlinedButton(
+                  onPressed: () {},
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  child: const Text('SOS', style: TextStyle(fontWeight: FontWeight.w800)),
+                ))),
+                const SizedBox(width: 10),
+                Expanded(flex: 2, child: SizedBox(height: 44, child: ElevatedButton(
+                  onPressed: () => Navigator.pushReplacement(context, PageRouteBuilder(
+                    pageBuilder: (_, __, ___) => TripSummaryScreen(produce: widget.produce, freshness: _freshness),
+                    transitionDuration: const Duration(milliseconds: 400),
+                    transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
+                  )),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.forestGreen,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  child: const Text('ARRIVED', style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white, fontSize: 14)),
+                ))),
+              ]),
+            ])),
           ),
         ],
       ),
-    ).animate().fadeIn().scale(
-          begin: const Offset(0.95, 0.95),
-          end: const Offset(1, 1),
-        );
-  }
-}
-
-class _PremiumPathPainter extends CustomPainter {
-  final Color routeColor;
-  final bool isPulsing;
-  final double truckProgress;
-  final bool isDark;
-
-  _PremiumPathPainter({
-    required this.routeColor,
-    required this.isPulsing,
-    required this.truckProgress,
-    required this.isDark,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Grid pattern
-    final gridPaint = Paint()
-      ..color = (isDark ? Colors.white : AppTheme.forestGreen)
-          .withValues(alpha: 0.04)
-      ..strokeWidth = 0.5;
-
-    const spacing = 35.0;
-    for (double x = 0; x < size.width; x += spacing) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-    }
-    for (double y = 0; y < size.height; y += spacing) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
-    }
-
-    // Route glow
-    final glowPaint = Paint()
-      ..color = routeColor.withValues(alpha: isPulsing ? 0.15 : 0.08)
-      ..strokeWidth = 20
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
-
-    final path = Path()
-      ..moveTo(size.width * 0.15, size.height * 0.75)
-      ..cubicTo(
-        size.width * 0.3, size.height * 0.6,
-        size.width * 0.5, size.height * 0.55,
-        size.width * 0.6, size.height * 0.45,
-      )
-      ..cubicTo(
-        size.width * 0.7, size.height * 0.35,
-        size.width * 0.75, size.height * 0.28,
-        size.width * 0.85, size.height * 0.2,
-      );
-
-    canvas.drawPath(path, glowPaint);
-
-    // Route line
-    final routePaint = Paint()
-      ..color = routeColor.withValues(alpha: isPulsing ? 0.7 : 0.5)
-      ..strokeWidth = 4
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawPath(path, routePaint);
-
-    // Origin circle
-    canvas.drawCircle(
-      Offset(size.width * 0.15, size.height * 0.75),
-      8,
-      Paint()..color = AppTheme.sunsetOrange,
     );
-    canvas.drawCircle(
-      Offset(size.width * 0.15, size.height * 0.75),
-      4,
-      Paint()..color = Colors.white,
-    );
-
-    // Destination circle
-    canvas.drawCircle(
-      Offset(size.width * 0.85, size.height * 0.2),
-      8,
-      Paint()..color = AppTheme.forestGreen,
-    );
-    canvas.drawCircle(
-      Offset(size.width * 0.85, size.height * 0.2),
-      4,
-      Paint()..color = Colors.white,
-    );
-
-    // Truck position (interpolated along path)
-    final pathMetrics = path.computeMetrics().first;
-    final truckPosition = pathMetrics.getTangentForOffset(
-      pathMetrics.length * truckProgress,
-    );
-
-    if (truckPosition != null) {
-      // Truck glow
-      canvas.drawCircle(
-        truckPosition.position,
-        18,
-        Paint()
-          ..color = AppTheme.infoBlue.withValues(alpha: 0.2)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-      );
-
-      // Truck body
-      canvas.drawCircle(
-        truckPosition.position,
-        10,
-        Paint()..color = AppTheme.infoBlue,
-      );
-
-      // Truck icon (small white circle as "window")
-      canvas.drawCircle(
-        truckPosition.position,
-        4,
-        Paint()..color = Colors.white,
-      );
-    }
   }
 
-  @override
-  bool shouldRepaint(covariant _PremiumPathPainter oldDelegate) => true;
+  Widget _pill(IconData icon, Color? color, VoidCallback onTap) {
+    return GestureDetector(onTap: onTap, child: Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle,
+        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)]),
+      child: Icon(icon, size: 20, color: color ?? Colors.black87),
+    ));
+  }
+
+  Widget _stat(String emoji, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(10)),
+      child: Column(children: [
+        Text(emoji, style: const TextStyle(fontSize: 14)),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+      ]),
+    );
+  }
 }
